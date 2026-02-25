@@ -4,6 +4,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.preprocessing import LabelEncoder
+import joblib
 
 # Mathematical Explanation:
 # 1. Random Forest Classifier:
@@ -50,6 +51,11 @@ def build_model(file_path):
     # random_state=42: Ensures reproducibility.
     rf = RandomForestClassifier(n_estimators=100, random_state=42)
     rf.fit(X_train, y_train)
+
+    # Save the model and the label encoder
+    joblib.dump(rf, 'maintenance_model.joblib')
+    joblib.dump(le, 'label_encoder.joblib')
+    print("Model and Label Encoder saved successfully.")
 
     # Predict and Evaluate
     y_pred = rf.predict(X_test)
