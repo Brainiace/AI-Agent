@@ -9,7 +9,7 @@ import joblib
 
 # Mathematical and Mechatronic Context:
 # 1. Physics-Informed Features:
-#    Adding 'Power_kW', 'Temp_Difference', and 'Torque_Wear_Product' provides the model
+#    Adding 'Power_kW', 'Temp_Diff', and 'Torque_Wear_Product' provides the model
 #    with explicit mechanical signals that represent stress and degradation.
 #
 # 2. Stability Analysis:
@@ -26,7 +26,7 @@ def run_diagnostics(file_path):
     # 1. Advanced Feature Engineering (Physics-Informed)
     # Must match the training script exactly
     df['Power_kW'] = (df['Torque [Nm]'] * df['Rotational speed [rpm]']) / 9550
-    df['Temp_Difference'] = df['Process temperature [K]'] - df['Air temperature [K]']
+    df['Temp_Diff'] = df['Process temperature [K]'] - df['Air temperature [K]']
     df['Torque_Wear_Product'] = df['Torque [Nm]'] * df['Tool wear [min]']
 
     # Preprocessing
@@ -45,7 +45,7 @@ def run_diagnostics(file_path):
         return
 
     # 1. Train vs. Test Comparison
-    # Note: We use the same random_state to compare fairly, but we now have better features
+    # Note: We use the same random_state to compare fairly
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
     y_train_pred = rf.predict(X_train)
@@ -78,7 +78,7 @@ def run_diagnostics(file_path):
     print(f"New Mean CV Accuracy: {new_mean:.4f}")
     print(f"New Std Deviation:    {new_std:.4f}")
 
-    # Comparison table
+    # Comparison table (approximate old standard for historical context)
     old_std = 0.1579
     print("\n--- Stability Comparison ---")
     print(f"{'Metric':<20} | {'Old Model':<10} | {'New Model':<10}")
@@ -93,7 +93,7 @@ def run_diagnostics(file_path):
     train_sizes, train_scores, test_scores = learning_curve(
         rf, X, y, cv=5, n_jobs=-1,
         train_sizes=np.linspace(0.1, 1.0, 10),
-        scoring='f1' # Evaluate on F1 as requested
+        scoring='f1'
     )
 
     train_mean = np.mean(train_scores, axis=1)
@@ -108,7 +108,7 @@ def run_diagnostics(file_path):
     plt.fill_between(train_sizes, test_mean - test_std, test_mean + test_std, alpha=0.1, color="g")
     plt.xlabel("Training examples")
     plt.ylabel("F1-Score")
-    plt.title("Learning Curve (Industrial-Standard RF)")
+    plt.title("Learning Curve (Optimized RF)")
     plt.legend(loc="best")
     plt.grid(True)
     plt.savefig('learning_curve.png')

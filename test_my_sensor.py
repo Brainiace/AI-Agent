@@ -3,18 +3,20 @@ import joblib
 
 # Mathematical Explanation:
 # 1. Physics-Informed Feature Calculation:
-#    The model now expects three additional features derived from the raw sensors:
-#    - Power_kW = (Torque * RPM) / 9550
-#    - Temp_Difference = Process_Temp - Air_Temp
-#    - Torque_Wear_Product = Torque * Tool_Wear
+#    The model expects three engineered features derived from the raw sensors:
+#    - Power_kW = (Torque * RPM) / 9550. Measures the mechanical workload.
+#    - Temp_Diff = Process_Temp - Air_Temp. Measures thermal energy accumulation.
+#    - Torque_Wear_Product = Torque * Tool_Wear. Measures the combined impact of
+#      current load and historical degradation.
 #
-# 2. Strategic Importance:
-#    By explicitly calculating these products and differences, we guide the model
-#    towards the mechanical physics of the machine (e.g., work done and thermal energy).
+# 2. Predictive Context:
+#    By providing these pre-calculated features, we help the Random Forest
+#    efficiently navigate the decision boundaries of mechatronic failure modes.
 
 def main():
     """
-    Interactively takes sensor inputs and predicts machine failure risk using the optimized model.
+    Interactively takes sensor inputs and predicts machine failure risk using the
+    optimized "Clean Slate" model.
     """
     try:
         # Load the saved model and label encoder
@@ -24,7 +26,7 @@ def main():
         print("Error: Model files not found. Please run predict_maintenance.py first.")
         return
 
-    print("--- AI4I 2020 Optimized Machine Failure Prediction ---")
+    print("\n--- AI4I 2020 Optimized Predictive Maintenance ---")
     print("Please enter the following sensor readings:")
 
     try:
@@ -35,7 +37,7 @@ def main():
         print("Invalid input. Please enter numeric values.")
         return
 
-    # Constants/Defaults for other features
+    # Constants/Defaults for features not interactively queried
     air_temp = 300.0
     proc_temp = 310.0
     machine_type = 'L'
@@ -46,11 +48,7 @@ def main():
     torque_wear = torque * tool_wear
 
     # 2. Prepare data for prediction
-    # Feature order MUST match the sequence the model was trained on.
-    # Training columns were: ['Type', 'Air temperature [K]', 'Process temperature [K]',
-    #                         'Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]',
-    #                         'Power_kW', 'Temp_Difference', 'Torque_Wear_Product']
-
+    # Feature order MUST match X.columns from training
     type_encoded = le.transform([machine_type])[0]
 
     input_data = pd.DataFrame([[
@@ -59,7 +57,7 @@ def main():
     ]], columns=[
         'Type', 'Air temperature [K]', 'Process temperature [K]',
         'Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]',
-        'Power_kW', 'Temp_Difference', 'Torque_Wear_Product'
+        'Power_kW', 'Temp_Diff', 'Torque_Wear_Product'
     ])
 
     # 3. Make prediction
@@ -72,12 +70,13 @@ def main():
     else:
         print(f"Result: WARNING: High Risk of Failure! (Failure Probability: {proba:.2%})")
 
-    # Specific Torque Warning
+    # Specific Torque Warning (Heuristic)
     if torque > 60:
-        print("\n[!] CRITICAL WARNING: Torque is over 60Nm. CHECK MOTOR COUPLINGS.")
+        print("[!] CRITICAL WARNING: Torque exceeds 60Nm. High risk of mechanical shear.")
+    if tool_wear > 200:
+        print("[!] TOOL WEAR ALERT: Accumulated wear over 200 mins. Schedule replacement.")
 
-    print("\n--- Analysis Note ---")
-    print(f"Engineered Features: Power={power_kw:.2f} kW, Temp Diff={temp_diff:.1f} K, Stress Product={torque_wear:.1f}")
+    print(f"\nEngineered Metrics: Power={power_kw:.2f} kW, Temp Diff={temp_diff:.1f} K, Stress Product={torque_wear:.1f}")
 
 if __name__ == "__main__":
     main()
