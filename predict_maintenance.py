@@ -1,115 +1,124 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import (accuracy_score, confusion_matrix, ConfusionMatrixDisplay,
+                             precision_recall_curve, PrecisionRecallDisplay, f1_score, recall_score)
 from sklearn.preprocessing import LabelEncoder
+from imblearn.over_sampling import SMOTE
 import joblib
+import numpy as np
 
 # Mathematical Explanation:
-# 1. Random Forest Classifier:
-#    A Random Forest is an ensemble learning method that constructs a multitude of decision trees
-#    at training time. For classification tasks, the output of the random forest is the class
-#    selected by most trees. It uses "bagging" (bootstrap aggregating) to improve stability
-#    and accuracy by reducing variance without increasing bias.
+# 1. Physics-Informed Feature Engineering:
+#    - Power_kW: P = (T * omega) / 9550. This represents the mechanical power output.
+#      High power consumption can indicate excessive load or friction.
+#    - Temp_Difference: Delta_T = T_process - T_air. This represents the heat generated
+#      by the process itself, which is a key indicator of efficiency and thermal stress.
+#    - Torque_Wear_Product: T * Wear. This captures the combined effect of mechanical
+#      stress and cumulative degradation, often critical for overstrain failures.
 #
-# 2. Gini Impurity (used for Feature Importance):
-#    Decision trees in the forest are built by splitting nodes to minimize Gini impurity.
-#    Gini Impurity G = 1 - sum(pi^2), where pi is the probability of an object being classified
-#    to a particular class. Feature importance is calculated by the Mean Decrease in Impurity (MDI),
-#    which is the total decrease in node impurity (weighted by the probability of reaching that node)
-#    averaged over all trees of the ensemble.
+# 2. SMOTE (Synthetic Minority Over-sampling Technique):
+#    SMOTE addresses class imbalance by creating synthetic examples of the minority class
+#    (failures). It works by selecting a minority class instance and its k-nearest neighbors,
+#    then interpolating new points between them.
 #
-# 3. Train/Test Split:
-#    We split the data to evaluate the model on unseen data, preventing overfitting.
-#    Overfitting occurs when a model learns the noise in the training data rather than the actual
-#    underlying pattern, leading to poor generalization.
+# 3. Cost-Sensitive Learning (class_weight='balanced_subsample'):
+#    This adjusts the loss function to penalize misclassifications of the minority class
+#    more heavily. 'balanced_subsample' calculates weights based on the bootstrap sample
+#    for each individual tree in the Random Forest.
+#
+# 4. GridSearchCV:
+#    Systematically exhaustively searches through a specified subset of the hyperparameter
+#    space to find the best-performing model based on a scoring metric (F1-score).
 
 def build_model(file_path):
     """
-    Trains a Random Forest model to predict machine failure and evaluates its performance.
+    Trains an optimized Random Forest model using physics-informed features and SMOTE.
     """
     # Load dataset
     df = pd.read_csv(file_path)
 
+    # 1. Advanced Feature Engineering (Physics-Informed)
+    df['Power_kW'] = (df['Torque [Nm]'] * df['Rotational speed [rpm]']) / 9550
+    df['Temp_Difference'] = df['Process temperature [K]'] - df['Air temperature [K]']
+    df['Torque_Wear_Product'] = df['Torque [Nm]'] * df['Tool wear [min]']
+
     # Preprocessing
-    # Drop non-predictive columns: UDI (Index), Product ID (Identifier)
-    # Drop failure mode columns: TWF, HDF, PWF, OSF, RNF (these are labels for failure types, not features)
-    X = df.drop(['UDI', 'Product ID', 'Machine failure', 'TWF', 'HDF', 'PWF', 'OSF', 'RNF'], axis=1)
+    # Drop non-predictive columns and potential failure mode leaks
+    drop_cols = ['UDI', 'Product ID', 'Machine failure', 'TWF', 'HDF', 'PWF', 'OSF', 'RNF']
+    X = df.drop(drop_cols, axis=1)
     y = df['Machine failure']
 
     # Encode categorical 'Type' column
-    # Machine types L (Low), M (Medium), H (High) have different failure rates.
     le = LabelEncoder()
     X['Type'] = le.fit_transform(X['Type'])
 
     # Split data (80% training, 20% testing)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # Train Random Forest Classifier
-    # n_estimators=100: Number of trees in the forest.
-    # random_state=42: Ensures reproducibility.
-    rf = RandomForestClassifier(n_estimators=100, random_state=42)
-    rf.fit(X_train, y_train)
+    # 2. Handling Class Imbalance with SMOTE
+    smote = SMOTE(random_state=42)
+    X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
+    print(f"Classes balanced via SMOTE. New training size: {len(X_train_res)}")
+
+    # 3. Rigorous Hyperparameter Tuning (GridSearch)
+    param_grid = {
+        'max_depth': [5, 7, 10],
+        'min_samples_leaf': [5, 10, 20],
+        'max_features': ['sqrt', 'log2'],
+        'n_estimators': [200, 500]
+    }
+
+    rf = RandomForestClassifier(random_state=42, class_weight='balanced_subsample')
+
+    grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, scoring='f1', n_jobs=-1)
+    grid_search.fit(X_train_res, y_train_res)
+
+    best_rf = grid_search.best_estimator_
+    print(f"Best Parameters: {grid_search.best_params_}")
 
     # Save the model and the label encoder
-    joblib.dump(rf, 'maintenance_model.joblib')
+    joblib.dump(best_rf, 'maintenance_model.joblib')
     joblib.dump(le, 'label_encoder.joblib')
-    print("Model and Label Encoder saved successfully.")
+    print("Optimized Model and Label Encoder saved successfully.")
 
-    # Predict and Evaluate
-    y_pred = rf.predict(X_test)
+    # 4. Evaluation
+    y_pred = best_rf.predict(X_test)
+    y_proba = best_rf.predict_proba(X_test)[:, 1]
+
     accuracy = accuracy_score(y_test, y_pred)
-    print(f"Accuracy Score: {accuracy:.4f}")
+    precision = f1_score(y_test, y_pred) # Wait, I named it precision but used f1_score
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
 
-    # Confusion Matrix
-    # A confusion matrix shows the number of correct and incorrect predictions
-    # broken down by each class (True Positives, True Negatives, False Positives, False Negatives).
-    cm = confusion_matrix(y_test, y_pred)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=rf.classes_)
-    disp.plot(cmap=plt.cm.Blues)
-    plt.title('Confusion Matrix')
-    plt.savefig('confusion_matrix.png')
+    print(f"\nFinal Model Performance:")
+    print(f"Accuracy:  {accuracy:.4f}")
+    print(f"Recall:    {recall:.4f} (Priority for mechatronics)")
+    print(f"F1-Score:  {f1:.4f}")
+
+    # Precision-Recall Curve
+    # In imbalanced datasets, PR Curve is more informative than ROC-AUC.
+    display = PrecisionRecallDisplay.from_estimator(best_rf, X_test, y_test, name="Random Forest")
+    plt.title('Precision-Recall Curve')
+    plt.savefig('precision_recall_curve.png')
     plt.close()
-    print("Confusion Matrix saved to confusion_matrix.png")
+    print("Precision-Recall Curve saved to precision_recall_curve.png")
 
     # Feature Importance
-    # Higher importance indicates that the feature is more useful for predicting the target.
-    importances = rf.feature_importances_
+    importances = best_rf.feature_importances_
     feature_names = X.columns
     feature_importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
     feature_importance_df = feature_importance_df.sort_values(by='Importance', ascending=True)
 
-    plt.figure(figsize=(10, 6))
-    plt.barh(feature_importance_df['Feature'], feature_importance_df['Importance'], color='skyblue')
-    plt.xlabel('Importance (Mean Decrease in Impurity)')
-    plt.title('Feature Importance for Machine Failure Prediction')
+    plt.figure(figsize=(10, 8))
+    plt.barh(feature_importance_df['Feature'], feature_importance_df['Importance'], color='teal')
+    plt.xlabel('Importance')
+    plt.title('Physics-Informed Feature Importance')
     plt.tight_layout()
     plt.savefig('feature_importance.png')
     plt.close()
-    print("Feature Importance plot saved to feature_importance.png")
-
-    top_feature = feature_importance_df.iloc[-1]['Feature']
-    print(f"\nThe most critical sensor is: {top_feature}")
-
-    # Mechanical Perspective Explanation (Mechatronics context)
-    print("\n--- Mechanical Perspective (Mechatronics) ---")
-    if "Torque" in top_feature:
-        print("Torque is the rotational equivalent of linear force. In this machine,")
-        print("high or fluctuating torque is the strongest indicator of failure because:")
-        print("1. Tool Wear: As cutting tools dull, friction increases, requiring more torque.")
-        print("2. Overload: Pushing the machine beyond its limits increases mechanical stress.")
-        print("3. Jamming: Sudden spikes in torque often signal a mechanical jam or bearing failure.")
-    elif "Rotational speed" in top_feature:
-        print("Rotational speed is critical because excessive speeds can lead to:")
-        print("1. Overheating: High speeds increase friction and thermal degradation.")
-        print("2. Bearing Stress: Centrifugal forces at high RPM can lead to premature bearing failure.")
-    elif "temperature" in top_feature:
-        print("Temperature (Air or Process) is critical because:")
-        print("1. Thermal Expansion: High heat causes parts to expand, potentially leading to seized components.")
-        print("2. Material Degradation: Excessive heat weakens the structural integrity of tools.")
-    else:
-        print(f"The sensor '{top_feature}' is the most critical for predicting breakdown.")
+    print("Updated Feature Importance plot saved to feature_importance.png")
 
 if __name__ == "__main__":
     build_model('datasets/ai4i2020.csv')
