@@ -3,40 +3,27 @@ import joblib
 
 # Mathematical Explanation:
 # 1. Prediction using Random Forest:
-#    The model consists of 100 decision trees. When we input new sensor data,
+#    The model consists of 500 decision trees. When we input new sensor data,
 #    each tree in the forest makes a prediction (0 for Safe, 1 for Failure).
-#    The final output is determined by a majority vote among all trees.
+#    The final probability is determined by the percentage of trees predicting '1'.
 #
-# 2. Probability and Threshold:
-#    The Random Forest can also output a probability score. In this binary
-#    classification, if more than 50% of the trees predict '1', the result
-#    is "High Risk of Failure".
-
-# Mechatronic Context:
-# - Torque [Nm]: Represents the mechanical stress on the motor and drive system.
-#   High torque often indicates increased friction due to tool wear or mechanical
-#   obstruction.
-# - Rotational Speed [rpm]: Influences centrifugal forces and heat generation.
-# - Tool Wear [min]: Cumulative time the tool has been used; as it increases,
-#   the cutting efficiency drops, leading to higher torque requirements.
-# - Motor Couplings: These components connect the motor shaft to the machine
-#   spindle. High torque (>60Nm) can exceed the rated capacity of standard
-#   couplings, leading to slippage or mechanical failure.
+# 2. Physics-Informed Feature Engineering:
+#    The model now expects 9 features. We must calculate Power_kW, Temp_Difference,
+#    and Torque_Wear_Product from the raw sensor inputs to match the training data.
 
 def main():
     """
-    Interactively takes sensor inputs and predicts machine failure risk.
+    Interactively takes sensor inputs and predicts machine failure risk using the optimized model.
     """
     try:
         # Load the saved model and label encoder
-        # joblib is used for efficient serialization of scikit-learn estimators.
         model = joblib.load('maintenance_model.joblib')
         le = joblib.load('label_encoder.joblib')
     except FileNotFoundError:
         print("Error: Model files not found. Please run predict_maintenance.py first.")
         return
 
-    print("--- AI4I 2020 Machine Failure Prediction ---")
+    print("--- AI4I 2020 Optimized Machine Failure Prediction ---")
     print("Please enter the following sensor readings:")
 
     try:
@@ -48,39 +35,37 @@ def main():
         return
 
     # Constants/Defaults for other features
-    # These values are chosen based on the dataset averages to provide a baseline.
     air_temp = 300.0  # Average Air temperature [K]
     proc_temp = 310.0 # Average Process temperature [K]
-    machine_type = 'L' # Defaulting to 'Low' type (most common)
+    machine_type = 'L' # Defaulting to 'Low' type
 
-    # Prepare data for prediction
-    # Feature order must match the order used during model training:
-    # ['Type', 'Air temperature [K]', 'Process temperature [K]', 'Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]']
+    # Calculate engineered features
+    power_kw = (torque * rpm) / 9550
+    temp_diff = proc_temp - air_temp
+    torque_wear = torque * tool_wear
 
-    # Encode 'Type' using the same label encoder used in training
+    # Prepare data for prediction (9 features)
     type_encoded = le.transform([machine_type])[0]
 
-    input_data = pd.DataFrame([[type_encoded, air_temp, proc_temp, rpm, torque, tool_wear]],
+    input_data = pd.DataFrame([[type_encoded, air_temp, proc_temp, rpm, torque, tool_wear, power_kw, temp_diff, torque_wear]],
                               columns=['Type', 'Air temperature [K]', 'Process temperature [K]',
-                                       'Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]'])
+                                       'Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]',
+                                       'Power_kW', 'Temp_Difference', 'Torque_Wear_Product'])
 
-    # Make prediction
-    # .predict() returns an array, we take the first element.
-    prediction = model.predict(input_data)[0]
+    # Make prediction using probability
+    prob = model.predict_proba(input_data)[0][1]
+    prediction = 1 if prob >= 0.5 else 0
 
     print("\n--- Prediction Result ---")
+    print(f"Failure Probability: {prob*100:.1f}%")
     if prediction == 0:
         print("Result: Machine is Safe")
     else:
         print("Result: WARNING: High Risk of Failure!")
 
-    # Specific Torque Warning as requested
+    # Specific Torque Warning
     if torque > 60:
-        print("\n[!] CRITICAL WARNING: Torque is over 60Nm. CHECK MOTOR COUPLINGS immediately for fatigue or misalignment.")
-
-    print("\n--- Analysis Note ---")
-    print(f"Input: Torque={torque} Nm, Speed={rpm} RPM, Tool Wear={tool_wear} min.")
-    print(f"Assumption: Air Temp=300K, Process Temp=310K, Machine Type={machine_type}.")
+        print("\n[!] CRITICAL WARNING: Torque is over 60Nm. CHECK MOTOR COUPLINGS immediately.")
 
 if __name__ == "__main__":
     main()
